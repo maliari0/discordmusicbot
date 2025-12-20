@@ -19,7 +19,8 @@ import {
     createAudioResource, 
     AudioPlayerStatus,
     VoiceConnection,
-    AudioPlayer
+    AudioPlayer,
+    StreamType
 } from '@discordjs/voice';
 import yts from 'yt-search';
 import YTDlpWrap from 'yt-dlp-wrap';
@@ -27,6 +28,7 @@ import dotenv from 'dotenv';
 import axios from 'axios';
 import { REST } from '@discordjs/rest';
 import { Routes } from 'discord-api-types/v10';
+import { spawn } from 'child_process';
 
 dotenv.config();
 
@@ -1265,42 +1267,94 @@ async function play(guildId: string, song: Song) {
     }
 
     try {
-        // yt-dlp ile audio stream al - basit ve güvenilir format seçimi
-        const stream = ytDlp.execStream([
+        // yt-dlp ile audio URL al (streaming yerine URL extraction)
+        const ytDlpProcess = spawn('yt-dlp', [
             song.url,
             '-f', 'bestaudio/best',
             '--no-playlist',
             '--geo-bypass',
             '--no-check-certificates',
             '--extractor-args', 'youtube:player_client=android,ios',
-            '-o', '-',
+            '--get-url',
             '--quiet'
         ]);
 
+        let audioUrl = '';
         let errorOccurred = false;
-        
-        stream.on('error', err => {
+
+        ytDlpProcess.stdout.on('data', (data) => {
+            audioUrl += data.toString();
+        });
+
+        ytDlpProcess.stderr.on('data', (data) => {
+            if (!errorOccurred) {
+                console.error('yt-dlp stderr:', data.toString());
+            }
+        });
+
+        ytDlpProcess.on('close', (code) => {
+            if (code !== 0 || !audioUrl.trim()) {
+                if (!errorOccurred) {
+                    errorOccurred = true;
+                    console.error('yt-dlp hatası, kod:', code);
+                    console.error('Şarkı URL:', song.url);
+                    serverQueue.textChannel.send({ embeds: [createErrorEmbed('❌ Şarkı çalınamadı! YouTube erişim sorunu olabilir.')] });
+                    if (serverQueue.songs.length > 0) {
+                        setTimeout(() => play(serverQueue.textChannel.guild.id, serverQueue.songs[0]), 1000);
+                    }
+                }
+                return;
+            }
+
+            // ffmpeg ile audio stream oluştur
+            const ffmpegProcess = spawn('ffmpeg', [
+                '-reconnect', '1',
+                '-reconnect_streamed', '1',
+                '-reconnect_delay_max', '5',
+                '-i', audioUrl.trim(),
+                '-analyzeduration', '0',
+                '-loglevel', '0',
+                '-f', 's16le',
+                '-ar', '48000',
+                '-ac', '2',
+                'pipe:1'
+            ], {
+                stdio: ['pipe', 'pipe', 'pipe']
+            });
+
+            ffmpegProcess.on('error', (err) => {
+                if (!errorOccurred) {
+                    errorOccurred = true;
+                    console.error('ffmpeg hatası:', err);
+                    serverQueue.textChannel.send({ embeds: [createErrorEmbed('❌ Ses akışı başlatılamadı!')] });
+                    if (serverQueue.songs.length > 0) {
+                        setTimeout(() => play(serverQueue.textChannel.guild.id, serverQueue.songs[0]), 1000);
+                    }
+                }
+            });
+
+            const resource = createAudioResource(ffmpegProcess.stdout, {
+                inputType: StreamType.Raw,
+                inlineVolume: true
+            });
+
+            serverQueue.player.play(resource);
+        });
+
+        ytDlpProcess.on('error', (err) => {
             if (!errorOccurred) {
                 errorOccurred = true;
-                console.error('yt-dlp stream hatası:', err);
-                console.error('Şarkı URL:', song.url);
-                serverQueue.textChannel.send({ embeds: [createErrorEmbed('❌ Şarkı çalınamadı! YouTube erişim sorunu olabilir.')] });
-                // Sonraki şarkıya geç
+                console.error('yt-dlp process hatası:', err);
+                serverQueue.textChannel.send({ embeds: [createErrorEmbed('❌ Şarkı çalınamadı!')] });
                 if (serverQueue.songs.length > 0) {
                     setTimeout(() => play(serverQueue.textChannel.guild.id, serverQueue.songs[0]), 1000);
                 }
             }
         });
 
-        const resource = createAudioResource(stream, {
-            inlineVolume: true
-        });
-        
-        serverQueue.player.play(resource);
     } catch (error) {
         console.error('Stream oluşturma hatası:', error);
         serverQueue.textChannel.send({ embeds: [createErrorEmbed('❌ Ses akışı başlatılamadı!')] });
-        // Sonraki şarkıya geç
         if (serverQueue.songs.length > 0) {
             setTimeout(() => play(serverQueue.textChannel.guild.id, serverQueue.songs[0]), 1000);
         }
