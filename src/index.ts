@@ -87,6 +87,7 @@ interface ServerQueue {
     lastPlayedSong?: Song;
     playedHistory: Set<string>;
     nowPlayingMessage?: Message; // Şu an çalan şarkı mesajı
+    buttonTimeout?: NodeJS.Timeout; // Buton timeout referansı
 }
 
 const client = new Client({
@@ -1261,15 +1262,6 @@ async function play(guildId: string, song: Song) {
         });
         
         serverQueue.nowPlayingMessage = npMessage;
-        
-        // 30 saniye sonra butonları kaldır (spam önleme)
-        setTimeout(async () => {
-            try {
-                await npMessage.edit({ components: [] });
-            } catch (error) {
-                // Mesaj silinmiş olabilir, hata yoksay
-            }
-        }, 30000);
     } catch (error) {
         console.error('Now playing mesaj hatası:', error);
     }
