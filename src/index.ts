@@ -1265,18 +1265,16 @@ async function play(guildId: string, song: Song) {
     }
 
     try {
-        // yt-dlp ile audio stream al - güncel formatlar ve cookies ile
+        // yt-dlp ile audio stream al - basit ve güvenilir format seçimi
         const stream = ytDlp.execStream([
             song.url,
-            '-f', 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio',
+            '-f', 'bestaudio/best',
             '--no-playlist',
             '--geo-bypass',
             '--no-check-certificates',
-            '--prefer-free-formats',
-            '--youtube-skip-dash-manifest',
-            '--extractor-args', 'youtube:player_client=android',
+            '--extractor-args', 'youtube:player_client=android,ios',
             '-o', '-',
-            '--no-warnings'
+            '--quiet'
         ]);
 
         let errorOccurred = false;
