@@ -34,25 +34,7 @@ const LASTFM_API_KEY = process.env.LASTFM_API_KEY;
 const LASTFM_BASE_URL = 'http://ws.audioscrobbler.com/2.0/';
 
 // yt-dlp binary'sini yükle (Railway için)
-let ytDlpInstance: YTDlpWrap | null = null;
-
-async function initYtDlp() {
-    if (ytDlpInstance) return ytDlpInstance;
-    
-    try {
-        ytDlpInstance = new YTDlpWrap();
-        // Binary'yi test et, yoksa indir
-        await ytDlpInstance.getVersion();
-        console.log('✅ yt-dlp binary hazır');
-    } catch (error) {
-        console.log('📥 yt-dlp indiriliyor...');
-        await YTDlpWrap.downloadFromGithub();
-        ytDlpInstance = new YTDlpWrap();
-        console.log('✅ yt-dlp başarıyla indirildi');
-    }
-    
-    return ytDlpInstance;
-}
+const ytDlp = new YTDlpWrap('yt-dlp');
 
 // 🎸 TANER BOT KARAKTERİ - Müzik delisi, rock seven, enerjik DJ
 const TANER_PERSONALITY = {
@@ -1271,7 +1253,6 @@ async function play(guildId: string, song: Song) {
     }
 
     try {
-        const ytDlp = await initYtDlp();
         const stream = ytDlp.execStream([
             song.url,
             '-f', 'bestaudio',
