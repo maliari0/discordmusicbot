@@ -1045,6 +1045,7 @@ async function executePlaySlash(interaction: ChatInputCommandInteraction, query:
                     } else {
                         if (currentQueue.autoplay && currentQueue.lastPlayedSong) {
                             console.log('\n🎧 ' + getRandomPhrase(TANER_PERSONALITY.autoplay));
+                            currentQueue.textChannel.send('📻 **Radyo Modu:** Benzer şarkı aranıyor...');
                             
                             const relatedSong = await getSmartRelatedSong(
                                 currentQueue.lastPlayedSong, 
@@ -1054,7 +1055,10 @@ async function executePlaySlash(interaction: ChatInputCommandInteraction, query:
                             if (relatedSong) {
                                 currentQueue.songs.push(relatedSong);
                                 if (relatedSong.id) currentQueue.playedHistory.add(relatedSong.id);
+                                currentQueue.textChannel.send(`📻 **Radyo:** Otomatik eklendi: **${relatedSong.title}**`);
                                 play(interaction.guildId!, relatedSong);
+                            } else {
+                                currentQueue.textChannel.send('⚠️ Uygun şarkı bulunamadı, radyo durdu.');
                             }
                         }
                     }
@@ -1178,6 +1182,8 @@ async function executePlay(message: Message, args: string[]) {
                         play(message.guild!.id, currentQueue.songs[0]);
                     } else {
                         if (currentQueue.autoplay && currentQueue.lastPlayedSong) {
+                            console.log('\n🎧 Radyo modu aktif, benzer şarkı aranıyor...');
+                            currentQueue.textChannel.send('📻 **Radyo Modu:** Benzer şarkı aranıyor...');
                             
                             const relatedSong = await getSmartRelatedSong(
                                 currentQueue.lastPlayedSong, 
@@ -1193,6 +1199,8 @@ async function executePlay(message: Message, args: string[]) {
                             } else {
                                 currentQueue.textChannel.send('⚠️ Uygun şarkı bulunamadı, radyo durdu.');
                             }
+                        } else {
+                            console.log('Autoplay:', currentQueue.autoplay, 'LastPlayed:', !!currentQueue.lastPlayedSong);
                         }
                     }
                 }
