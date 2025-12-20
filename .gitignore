@@ -1,3 +1,27 @@
+# Sensitive files
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+node_modules/
+dist/
+*.js
+*.js.map
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Old documentation
 /AUTOPLAY_README.md
 /GIT_COMMIT_GUIDE.md
 /UPGRADE_SUMMARY.md
