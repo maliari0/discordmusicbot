@@ -22,7 +22,7 @@ import {
     AudioPlayer
 } from '@discordjs/voice';
 import yts from 'yt-search';
-import { spawn } from 'child_process';
+import YTDlpWrap from 'yt-dlp-wrap';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import { REST } from '@discordjs/rest';
@@ -1249,22 +1249,27 @@ async function play(guildId: string, song: Song) {
         console.error('Now playing mesaj hatası:', error);
     }
 
-    const ytDlpProcess = spawn('./yt-dlp.exe', [
-        song.url,
-        '-o', '-',
-        '-q',
-        '-f', 'bestaudio',
-        '--no-playlist',
-        '--buffer-size', '16K'
-    ]);
+    try {
+        const ytDlp = new YTDlpWrap();
+        const stream = ytDlp.execStream([
+            song.url,
+            '-f', 'bestaudio',
+            '--no-playlist',
+            '-o', '-',
+            '-q'
+        ]);
 
-    ytDlpProcess.on('error', err => {
-        console.error('yt-dlp hatası:', err);
-        serverQueue.textChannel.send({ embeds: [createErrorEmbed('❌ Şarkı çalınamadı!')] });
-    });
+        stream.on('error', err => {
+            console.error('yt-dlp hatası:', err);
+            serverQueue.textChannel.send({ embeds: [createErrorEmbed('❌ Şarkı çalınamadı!')] });
+        });
 
-    const resource = createAudioResource(ytDlpProcess.stdout);
-    serverQueue.player.play(resource);
+        const resource = createAudioResource(stream);
+        serverQueue.player.play(resource);
+    } catch (error) {
+        console.error('Stream oluşturma hatası:', error);
+        serverQueue.textChannel.send({ embeds: [createErrorEmbed('❌ Ses akışı başlatılamadı!')] });
+    }
 }
 
 function toggleAutoplay(message: Message) {
