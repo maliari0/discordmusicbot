@@ -600,8 +600,24 @@ async function getSimilarTracksFromLastFm(artist: string, track: string): Promis
         return [];
     }
     
+    // Önce artist + track ile dene
+    let results = await tryLastFmSearch(artist, track, 'artist + track');
+    
+    // Bulamazsa sadece track adı ile dene (Türkçe şarkılar için)
+    if (results.length === 0 && track.length > 3) {
+        console.log(`  🔄 Sadece şarkı adı ile tekrar deneniyor...`);
+        results = await tryLastFmSearchByTrackOnly(track);
+    }
+    
+    return results;
+}
+
+/**
+ * Last.fm'den artist + track ile arama yapar
+ */
+async function tryLastFmSearch(artist: string, track: string, mode: string): Promise<LastFmTrack[]> {
     try {
-        console.log(`  🎸 Last.fm sorgusu: "${artist}" - "${track}"`);
+        console.log(`  🎸 Last.fm sorgusu (${mode}): "${artist}" - "${track}"`);
         
         const response = await axios.get(LASTFM_BASE_URL, {
             params: {
@@ -610,7 +626,8 @@ async function getSimilarTracksFromLastFm(artist: string, track: string): Promis
                 track: track,
                 api_key: LASTFM_API_KEY,
                 format: 'json',
-                limit: 3
+                limit: 3,
+                autocorrect: 1  // Türkçe karakterler için otomatik düzeltme
             },
             timeout: 5000
         });
@@ -619,7 +636,7 @@ async function getSimilarTracksFromLastFm(artist: string, track: string): Promis
         
         // Hata durumları kontrol et
         if (response.data?.error) {
-            console.log(`  ❌ Last.fm API hatası: ${response.data.message} (kod: ${response.data.error})`);
+            console.log(`  ⚠️  Last.fm API hatası: ${response.data.message} (kod: ${response.data.error})`);
             return [];
         }
         
@@ -643,8 +660,7 @@ async function getSimilarTracksFromLastFm(artist: string, track: string): Promis
             
             return validTracks;
         } else {
-            console.log('  ⚠️  Last.fm\'den sonuç gelmedi (track bilgisi yok)');
-            console.log(`  📄 Response: ${JSON.stringify(response.data).substring(0, 200)}`);
+            console.log(`  ⚠️  ${mode} ile sonuç bulunamadı`);
         }
         
         return [];
@@ -652,13 +668,58 @@ async function getSimilarTracksFromLastFm(artist: string, track: string): Promis
         if (error.code === 'ECONNABORTED') {
             console.log('  ⚠️  Last.fm timeout (5s)');
         } else if (error.response) {
-            console.log(`  ❌ Last.fm HTTP hatası: ${error.response.status} - ${error.response.statusText}`);
-            console.log(`  📄 Response: ${JSON.stringify(error.response.data).substring(0, 200)}`);
+            console.log(`  ⚠️  Last.fm HTTP hatası: ${error.response.status}`);
         } else if (error.request) {
-            console.log('  ❌ Last.fm\'e ulaşılamadı (network hatası)');
+            console.log('  ⚠️  Last.fm\'e ulaşılamadı');
         } else {
-            console.log(`  ❌ Last.fm hatası: ${error.message}`);
+            console.log(`  ⚠️  Last.fm hatası: ${error.message}`);
         }
+        return [];
+    }
+}
+
+/**
+ * Last.fm'den SADECE track adı ile arama yapar (track.search metodu)
+ * Türkçe şarkılar için daha etkili
+ */
+async function tryLastFmSearchByTrackOnly(track: string): Promise<LastFmTrack[]> {
+    try {
+        console.log(`  🎵 Last.fm şarkı araması: "${track}"`);
+        
+        const response = await axios.get(LASTFM_BASE_URL, {
+            params: {
+                method: 'track.search',
+                track: track,
+                api_key: LASTFM_API_KEY,
+                format: 'json',
+                limit: 10,
+                autocorrect: 1
+            },
+            timeout: 5000
+        });
+        
+        if (response.data?.results?.trackmatches?.track) {
+            let tracks = response.data.results.trackmatches.track;
+            
+            // Tek sonuç array değilse array yap
+            if (!Array.isArray(tracks)) {
+                tracks = [tracks];
+            }
+            
+            // İlk sonucu bul ve onun benzerlerini getir
+            if (tracks.length > 0) {
+                const firstTrack = tracks[0];
+                console.log(`  🎯 Bulunan şarkı: ${firstTrack.artist} - ${firstTrack.name}`);
+                
+                // Şimdi bu şarkının benzerlerini al
+                return await tryLastFmSearch(firstTrack.artist, firstTrack.name, 'bulunan şarkı');
+            }
+        }
+        
+        console.log(`  ⚠️  Şarkı adı ile sonuç bulunamadı`);
+        return [];
+    } catch (error: any) {
+        console.log(`  ⚠️  Şarkı araması başarısız: ${error.message}`);
         return [];
     }
 }
