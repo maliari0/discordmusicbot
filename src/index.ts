@@ -1,4 +1,18 @@
-import { Client, GatewayIntentBits, Events, Message, TextChannel, VoiceBasedChannel } from 'discord.js';
+import { 
+    Client, 
+    GatewayIntentBits, 
+    Events, 
+    Message, 
+    TextChannel, 
+    VoiceBasedChannel,
+    EmbedBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    ComponentType,
+    ChatInputCommandInteraction,
+    ButtonInteraction
+} from 'discord.js';
 import { 
     joinVoiceChannel, 
     createAudioPlayer, 
@@ -11,18 +25,50 @@ import yts from 'yt-search';
 import { spawn } from 'child_process';
 import dotenv from 'dotenv';
 import axios from 'axios';
+import { REST } from '@discordjs/rest';
+import { Routes } from 'discord-api-types/v10';
 
 dotenv.config();
 
 const LASTFM_API_KEY = process.env.LASTFM_API_KEY;
 const LASTFM_BASE_URL = 'http://ws.audioscrobbler.com/2.0/';
 
+// 🎸 TANER BOT KARAKTERİ - Müzik delisi, rock seven, enerjik DJ
+const TANER_PERSONALITY = {
+    ready: [
+        '🎸 TANER sahneye çıktı! Rock\'n\'Roll baby!',
+        '🔥 Müzik sistemi aktif! Hoparlörleri patlatmaya hazır mısın?',
+        '⚡ TANER burada! Hangi şarkıyı duydurmak istersin?',
+    ],
+    playing: [
+        '🎵 İşte bu! Ses sistemini aç!',
+        '🔊 Bunu çalarken komşular şikayet etsin!',
+        '🎸 Müthiş bir seçim! Devam edelim!',
+        '⚡ Bu şarkıyla evler titresin!',
+    ],
+    autoplay: [
+        '🎧 Radyo modu açık! DJ TANER mikrofonda!',
+        '📻 Akıllı radyo aktif! Benzer şarkılar yükleniyooor!',
+        '🔥 Müzik asla durmayacak! Let\'s gooo!',
+    ],
+    searching: [
+        '🔍 Arşivlere dalıyorum...',
+        '🎵 Müzik koleksiyonuna bakıyorum...',
+        '🎸 En iyi şarkıyı buluyorum...',
+    ]
+};
+
+const getRandomPhrase = (phrases: string[]) => phrases[Math.floor(Math.random() * phrases.length)];
+
 // --- TİP TANIMLAMALARI ---
 interface Song {
     title: string;
     url: string;
     id?: string;
-    keywords?: string[]; // Şarkının anahtar kelimeleri (genre, mood vb.)
+    keywords?: string[];
+    thumbnail?: string; // YouTube thumbnail
+    duration?: string;  // Şarkı süresi
+    requestedBy?: string; // Kim istedi
 }
 
 interface ServerQueue {
@@ -35,6 +81,7 @@ interface ServerQueue {
     autoplay: boolean;
     lastPlayedSong?: Song;
     playedHistory: Set<string>;
+    nowPlayingMessage?: Message; // Şu an çalan şarkı mesajı
 }
 
 const client = new Client({
@@ -48,12 +95,265 @@ const client = new Client({
 
 const queue = new Map<string, ServerQueue>();
 
-client.once(Events.ClientReady, c => {
-    console.log(`✅ ${c.user.tag} göreve hazır!`);
-    console.log('🎵 Akıllı Radyo Sistemi: Genre-Aware Autoplay v7.0');
-    console.log('📡 YouTube Mix + Multi-Strategy Algorithm aktif');
-    console.log('═══════════════════════════════════════════════════');
+// 🎵 Slash Commands Tanımları
+const commands = [
+    {
+        name: 'play',
+        description: '🎵 Şarkı çal veya sıraya ekle',
+        options: [{
+            name: 'şarkı',
+            description: 'Çalmak istediğin şarkı adı veya URL',
+            type: 3, // STRING
+            required: true
+        }]
+    },
+    {
+        name: 'skip',
+        description: '⏭️ Şarkıyı geç'
+    },
+    {
+        name: 'stop',
+        description: '⏹️ Müziği durdur ve kanaldan çık'
+    },
+    {
+        name: 'pause',
+        description: '⏸️ Müziği duraklat'
+    },
+    {
+        name: 'resume',
+        description: '▶️ Müziği devam ettir'
+    },
+    {
+        name: 'queue',
+        description: '📜 Şarkı sırasını göster'
+    },
+    {
+        name: 'autoplay',
+        description: '📻 Akıllı radyo modunu aç/kapat'
+    },
+    {
+        name: 'nowplaying',
+        description: '🎧 Şu an çalan şarkıyı göster'
+    }
+];
+
+// Slash commands'ı kaydet
+async function registerCommands() {
+    try {
+        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN!);
+        console.log('🔄 Slash commands kaydediliyor...');
+        
+        await rest.put(
+            Routes.applicationCommands(process.env.CLIENT_ID!),
+            { body: commands }
+        );
+        
+        console.log('✅ Slash commands başarıyla kaydedildi!');
+    } catch (error) {
+        console.error('❌ Slash commands kayıt hatası:', error);
+    }
+}
+
+client.once(Events.ClientReady, async c => {
+    console.log('\n' + '═'.repeat(50));
+    console.log(getRandomPhrase(TANER_PERSONALITY.ready));
+    console.log('═'.repeat(50));
+    console.log('🎵 Akıllı Radyo Sistemi: Last.fm Integration v8.0');
+    console.log('📡 Last.fm API + Smart Filters + Auto Artist Variety');
+    console.log('🎸 Slash Commands + Embeds + Button Controls');
+    console.log('═'.repeat(50) + '\n');
+    
+    await registerCommands();
 });
+
+// 🎮 Slash Command Handler
+client.on(Events.InteractionCreate, async interaction => {
+    if (interaction.isChatInputCommand()) {
+        await handleSlashCommand(interaction);
+    } else if (interaction.isButton()) {
+        await handleButtonInteraction(interaction);
+    }
+});
+
+// 🎯 Slash Command Handler Fonksiyonu
+async function handleSlashCommand(interaction: ChatInputCommandInteraction) {
+    const { commandName } = interaction;
+    
+    try {
+        switch (commandName) {
+            case 'play':
+                const query = interaction.options.getString('şarkı', true);
+                await executePlaySlash(interaction, query);
+                break;
+            case 'skip':
+                await skipSlash(interaction);
+                break;
+            case 'stop':
+                await stopSlash(interaction);
+                break;
+            case 'pause':
+                await pauseSlash(interaction);
+                break;
+            case 'resume':
+                await resumeSlash(interaction);
+                break;
+            case 'queue':
+                await showQueueSlash(interaction);
+                break;
+            case 'autoplay':
+                await toggleAutoplaySlash(interaction);
+                break;
+            case 'nowplaying':
+                await showNowPlayingSlash(interaction);
+                break;
+            default:
+                await interaction.reply({ content: '❌ Bilinmeyen komut!', ephemeral: true });
+        }
+    } catch (error) {
+        console.error('Slash command hatası:', error);
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ content: '❌ Bir hata oluştu!', ephemeral: true });
+        }
+    }
+}
+
+// 🎨 Embed Builder Fonksiyonları
+function createNowPlayingEmbed(song: Song, queueLength: number): EmbedBuilder {
+    const embed = new EmbedBuilder()
+        .setColor(0xFF0000) // YouTube kırmızısı
+        .setTitle('🎵 Şu An Çalıyor')
+        .setDescription(`**${song.title}**`)
+        .addFields(
+            { name: '⏱️ Süre', value: song.duration || 'Bilinmiyor', inline: true },
+            { name: '📊 Sıradaki', value: `${queueLength} şarkı`, inline: true }
+        )
+        .setTimestamp()
+        .setFooter({ text: 'TANER DJ | Taner kim amk?! 🎸' });
+    
+    if (song.thumbnail) {
+        embed.setThumbnail(song.thumbnail);
+    }
+    
+    if (song.requestedBy) {
+        embed.addFields({ name: '👤 İsteyen', value: song.requestedBy, inline: true });
+    }
+    
+    return embed;
+}
+
+function createQueueEmbed(songs: Song[], autoplay: boolean): EmbedBuilder {
+    const embed = new EmbedBuilder()
+        .setColor(0x00FF00) // Yeşil
+        .setTitle('📜 Şarkı Sırası')
+        .setTimestamp()
+        .setFooter({ text: `Akıllı Radyo: ${autoplay ? '✅ Açık' : '❌ Kapalı'}` });
+    
+    if (songs.length === 0) {
+        embed.setDescription('🎵 Sıra boş! `/play` ile şarkı ekle!');
+    } else {
+        const queueList = songs.slice(0, 10).map((song, index) => {
+            const emoji = index === 0 ? '▶️' : `${index + 1}.`;
+            return `${emoji} **${song.title}**`;
+        }).join('\n');
+        
+        embed.setDescription(queueList);
+        
+        if (songs.length > 10) {
+            embed.addFields({ name: '➕ Daha fazla', value: `... ve ${songs.length - 10} şarkı daha` });
+        }
+    }
+    
+    return embed;
+}
+
+function createSearchingEmbed(): EmbedBuilder {
+    return new EmbedBuilder()
+        .setColor(0xFFFF00) // Sarı
+        .setTitle('🔍 Aranıyor...')
+        .setDescription(getRandomPhrase(TANER_PERSONALITY.searching))
+        .setTimestamp();
+}
+
+function createErrorEmbed(message: string): EmbedBuilder {
+    return new EmbedBuilder()
+        .setColor(0xFF0000) // Kırmızı
+        .setTitle('❌ Hata')
+        .setDescription(message)
+        .setTimestamp();
+}
+
+// 🎮 Playback Control Buttons
+function createPlaybackButtons(isPaused: boolean): ActionRowBuilder<ButtonBuilder> {
+    return new ActionRowBuilder<ButtonBuilder>()
+        .addComponents(
+            new ButtonBuilder()
+                .setCustomId('pause_resume')
+                .setLabel(isPaused ? '▶️ Devam Et' : '⏸️ Duraklat')
+                .setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId('skip')
+                .setLabel('⏭️ Geç')
+                .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+                .setCustomId('stop')
+                .setLabel('⏹️ Durdur')
+                .setStyle(ButtonStyle.Danger),
+            new ButtonBuilder()
+                .setCustomId('queue')
+                .setLabel('📜 Sıra')
+                .setStyle(ButtonStyle.Secondary)
+        );
+}
+
+// 🎯 Button Interaction Handler
+async function handleButtonInteraction(interaction: ButtonInteraction) {
+    const serverQueue = queue.get(interaction.guildId!);
+    
+    if (!serverQueue) {
+        return interaction.reply({ content: '❌ Bot bir ses kanalında değil!', ephemeral: true });
+    }
+    
+    switch (interaction.customId) {
+        case 'pause_resume':
+            if (serverQueue.playing) {
+                serverQueue.player.pause();
+                serverQueue.playing = false;
+                await interaction.reply({ content: '⏸️ Müzik duraklatıldı!', ephemeral: true });
+            } else {
+                serverQueue.player.unpause();
+                serverQueue.playing = true;
+                await interaction.reply({ content: '▶️ Müzik devam ediyor!', ephemeral: true });
+            }
+            
+            // Mesajı güncelle
+            if (serverQueue.nowPlayingMessage && serverQueue.songs[0]) {
+                await serverQueue.nowPlayingMessage.edit({
+                    embeds: [createNowPlayingEmbed(serverQueue.songs[0], serverQueue.songs.length - 1)],
+                    components: [createPlaybackButtons(!serverQueue.playing)]
+                });
+            }
+            break;
+            
+        case 'skip':
+            serverQueue.player.stop();
+            await interaction.reply({ content: '⏭️ Şarkı geçiliyor!', ephemeral: true });
+            break;
+            
+        case 'stop':
+            serverQueue.songs = [];
+            serverQueue.playedHistory.clear();
+            serverQueue.player.stop();
+            serverQueue.connection.destroy();
+            queue.delete(interaction.guildId!);
+            await interaction.reply({ content: '⏹️ Tanereye gitti la', ephemeral: true });
+            break;
+            
+        case 'queue':
+            const queueEmbed = createQueueEmbed(serverQueue.songs, serverQueue.autoplay);
+            await interaction.reply({ embeds: [queueEmbed], ephemeral: true });
+            break;
+    }
+}
 
 client.on(Events.MessageCreate, async (message: Message) => {
     if (message.author.bot) return;
@@ -559,7 +859,10 @@ async function getSmartRelatedSong(lastSong: Song, history: Set<string>): Promis
             title: selected.title,
             url: selected.url,
             id: selected.videoId,
-            keywords: extractKeywords(selected.title)
+            keywords: extractKeywords(selected.title),
+            thumbnail: selected.thumbnail,
+            duration: selected.timestamp,
+            requestedBy: '🤖 Akıllı Radyo'
         };
         
     } catch (error) {
@@ -569,6 +872,157 @@ async function getSmartRelatedSong(lastSong: Song, history: Set<string>): Promis
 }
 
 // --- CORE PLAY FUNCTION ---
+
+// 🔍 Şarkı Arama Helper
+async function searchSong(query: string, requestedBy?: string): Promise<Song | null> {
+    try {
+        if (query.startsWith('http')) {
+            const videoIdMatch = query.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/);
+            const id = videoIdMatch ? videoIdMatch[1] : undefined;
+            return { 
+                title: 'URL Şarkısı', 
+                url: query, 
+                id: id,
+                requestedBy 
+            };
+        } else {
+            const r = await yts(query);
+            if (r.videos.length === 0) return null;
+            
+            const vid = r.videos[0];
+            return { 
+                title: vid.title, 
+                url: vid.url, 
+                id: vid.videoId,
+                keywords: extractKeywords(vid.title),
+                thumbnail: vid.thumbnail,
+                duration: vid.timestamp,
+                requestedBy
+            };
+        }
+    } catch (error) {
+        console.error('Şarkı arama hatası:', error);
+        return null;
+    }
+}
+
+// 🎵 Slash Command Play Handler
+async function executePlaySlash(interaction: ChatInputCommandInteraction, query: string) {
+    await interaction.deferReply();
+    
+    const member = interaction.member as any;
+    if (!member || !member.voice?.channel) {
+        return interaction.editReply({ embeds: [createErrorEmbed('❌ Önce bir ses kanalına girmelisin!')] });
+    }
+
+    const voiceChannel = member.voice.channel;
+    const searchEmbed = createSearchingEmbed();
+    await interaction.editReply({ embeds: [searchEmbed] });
+
+    const song = await searchSong(query, interaction.user.username);
+    
+    if (!song) {
+        return interaction.editReply({ embeds: [createErrorEmbed('❌ Şarkı bulunamadı!')] });
+    }
+
+    const serverQueue = queue.get(interaction.guildId!);
+
+    if (!serverQueue) {
+        const queueContruct: ServerQueue = {
+            textChannel: interaction.channel as TextChannel,
+            voiceChannel: voiceChannel,
+            connection: null as any,
+            player: createAudioPlayer(),
+            songs: [],
+            playing: true,
+            autoplay: true, 
+            lastPlayedSong: undefined,
+            playedHistory: new Set()
+        };
+
+        queue.set(interaction.guildId!, queueContruct);
+        queueContruct.songs.push(song);
+        if (song.id) queueContruct.playedHistory.add(song.id);
+
+        try {
+            const connection = joinVoiceChannel({
+                channelId: voiceChannel.id,
+                guildId: interaction.guildId!,
+                adapterCreator: interaction.guild!.voiceAdapterCreator,
+            });
+
+            queueContruct.connection = connection;
+
+            queueContruct.player.on(AudioPlayerStatus.Idle, async () => {
+                const currentQueue = queue.get(interaction.guildId!);
+                if (currentQueue) {
+                    if (currentQueue.songs.length > 0) {
+                        currentQueue.lastPlayedSong = currentQueue.songs[0];
+                    }
+                    
+                    currentQueue.songs.shift();
+
+                    if (currentQueue.songs.length > 0) {
+                        play(interaction.guildId!, currentQueue.songs[0]);
+                    } else {
+                        if (currentQueue.autoplay && currentQueue.lastPlayedSong) {
+                            console.log('\n🎧 ' + getRandomPhrase(TANER_PERSONALITY.autoplay));
+                            
+                            const relatedSong = await getSmartRelatedSong(
+                                currentQueue.lastPlayedSong, 
+                                currentQueue.playedHistory
+                            );
+
+                            if (relatedSong) {
+                                currentQueue.songs.push(relatedSong);
+                                if (relatedSong.id) currentQueue.playedHistory.add(relatedSong.id);
+                                play(interaction.guildId!, relatedSong);
+                            }
+                        }
+                    }
+                }
+            });
+
+            connection.subscribe(queueContruct.player);
+
+            play(interaction.guildId!, queueContruct.songs[0]);
+            
+            const playEmbed = new EmbedBuilder()
+                .setColor(0x00FF00)
+                .setTitle('🎵 Çalıyor')
+                .setDescription(`**${song.title}**\n\n${getRandomPhrase(TANER_PERSONALITY.playing)}`)
+                .setThumbnail(song.thumbnail || '')
+                .addFields(
+                    { name: '⏱️ Süre', value: song.duration || 'Bilinmiyor', inline: true },
+                    { name: '👤 İsteyen', value: song.requestedBy || 'Bilinmiyor', inline: true },
+                    { name: '📻 Radyo', value: 'Otomatik AÇIK 🔥', inline: true }
+                )
+                .setTimestamp();
+            
+            await interaction.editReply({ embeds: [playEmbed] });
+        } catch (error) {
+            console.error(error);
+            queue.delete(interaction.guildId!);
+            return interaction.editReply({ embeds: [createErrorEmbed('❌ Ses kanalına bağlanılamadı!')] });
+        }
+    } else {
+        serverQueue.songs.push(song);
+        if (song.id) serverQueue.playedHistory.add(song.id);
+        
+        const queueEmbed = new EmbedBuilder()
+            .setColor(0xFFFF00)
+            .setTitle('📥 Sıraya Eklendi')
+            .setDescription(`**${song.title}**`)
+            .setThumbnail(song.thumbnail || '')
+            .addFields(
+                { name: '📊 Sıradaki Pozisyon', value: `${serverQueue.songs.length}`, inline: true },
+                { name: '👤 İsteyen', value: song.requestedBy || 'Bilinmiyor', inline: true }
+            )
+            .setTimestamp();
+        
+        return interaction.editReply({ embeds: [queueEmbed] });
+    }
+}
 
 async function executePlay(message: Message, args: string[]) {
     if (!message.member || !message.member.voice.channel) {
@@ -587,7 +1041,7 @@ async function executePlay(message: Message, args: string[]) {
         if (query.startsWith('http')) {
             const videoIdMatch = query.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/);
             const id = videoIdMatch ? videoIdMatch[1] : undefined;
-            song = { title: 'URL Şarkısı', url: query, id: id };
+            song = { title: 'URL Şarkısı', url: query, id: id, requestedBy: message.author.username };
         } else {
             const r = await yts(query);
             if (r.videos.length === 0) return message.reply('Sonuç bulunamadı.');
@@ -596,7 +1050,10 @@ async function executePlay(message: Message, args: string[]) {
                 title: vid.title, 
                 url: vid.url, 
                 id: vid.videoId,
-                keywords: extractKeywords(vid.title)
+                keywords: extractKeywords(vid.title),
+                thumbnail: vid.thumbnail,
+                duration: vid.timestamp,
+                requestedBy: message.author.username
             };
         }
     } catch (error) {
@@ -694,7 +1151,7 @@ async function executePlay(message: Message, args: string[]) {
     }
 }
 
-function play(guildId: string, song: Song) {
+async function play(guildId: string, song: Song) {
     const serverQueue = queue.get(guildId);
     if (!serverQueue) return;
     if (!song) return;
@@ -705,6 +1162,30 @@ function play(guildId: string, song: Song) {
             song.id = match[1];
             serverQueue.playedHistory.add(song.id);
         }
+    }
+
+    // 🎵 Now Playing mesajını gönder
+    try {
+        const nowPlayingEmbed = createNowPlayingEmbed(song, serverQueue.songs.length - 1);
+        const buttons = createPlaybackButtons(false);
+        
+        const npMessage = await serverQueue.textChannel.send({
+            embeds: [nowPlayingEmbed],
+            components: [buttons]
+        });
+        
+        serverQueue.nowPlayingMessage = npMessage;
+        
+        // 30 saniye sonra butonları kaldır (spam önleme)
+        setTimeout(async () => {
+            try {
+                await npMessage.edit({ components: [] });
+            } catch (error) {
+                // Mesaj silinmiş olabilir, hata yoksay
+            }
+        }, 30000);
+    } catch (error) {
+        console.error('Now playing mesaj hatası:', error);
     }
 
     const ytDlpProcess = spawn('./yt-dlp.exe', [
@@ -718,7 +1199,7 @@ function play(guildId: string, song: Song) {
 
     ytDlpProcess.on('error', err => {
         console.error('yt-dlp hatası:', err);
-        serverQueue.textChannel.send('Şarkı çalınamadı (Process Hatası).');
+        serverQueue.textChannel.send({ embeds: [createErrorEmbed('❌ Şarkı çalınamadı!')] });
     });
 
     const resource = createAudioResource(ytDlpProcess.stdout);
@@ -751,6 +1232,124 @@ function stop(message: Message) {
     serverQueue.connection.destroy();
     queue.delete(message.guild!.id);
     message.reply('🛑 Durduruldu.');
+}
+
+// 🎮 Slash Command Handlers
+async function skipSlash(interaction: ChatInputCommandInteraction) {
+    const serverQueue = queue.get(interaction.guildId!);
+    if (!serverQueue) {
+        return interaction.reply({ embeds: [createErrorEmbed('❌ Sırada şarkı yok!')], ephemeral: true });
+    }
+    
+    serverQueue.player.stop();
+    
+    const embed = new EmbedBuilder()
+        .setColor(0x00FF00)
+        .setTitle('⏭️ Şarkı Geçildi')
+        .setDescription('Sıradaki şarkıya geçiliyor...')
+        .setTimestamp();
+    
+    await interaction.reply({ embeds: [embed] });
+}
+
+async function stopSlash(interaction: ChatInputCommandInteraction) {
+    const serverQueue = queue.get(interaction.guildId!);
+    if (!serverQueue) {
+        return interaction.reply({ embeds: [createErrorEmbed('❌ Zaten çalan bir şey yok!')], ephemeral: true });
+    }
+    
+    serverQueue.songs = [];
+    serverQueue.playedHistory.clear();
+    serverQueue.autoplay = false;
+    serverQueue.player.stop();
+    serverQueue.connection.destroy();
+    queue.delete(interaction.guildId!);
+    
+    const embed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('⏹️ Durduruldu')
+        .setDescription('Müzik durduruldu! Görüşürüz rockçı! 🎸')
+        .setTimestamp();
+    
+    await interaction.reply({ embeds: [embed] });
+}
+
+async function pauseSlash(interaction: ChatInputCommandInteraction) {
+    const serverQueue = queue.get(interaction.guildId!);
+    if (!serverQueue || serverQueue.player.state.status !== AudioPlayerStatus.Playing) {
+        return interaction.reply({ embeds: [createErrorEmbed('❌ Duraklatılacak bir şey yok!')], ephemeral: true });
+    }
+    
+    serverQueue.player.pause();
+    serverQueue.playing = false;
+    
+    const embed = new EmbedBuilder()
+        .setColor(0xFFFF00)
+        .setTitle('⏸️ Duraklatıldı')
+        .setDescription('Müzik duraklatıldı!')
+        .setTimestamp();
+    
+    await interaction.reply({ embeds: [embed] });
+}
+
+async function resumeSlash(interaction: ChatInputCommandInteraction) {
+    const serverQueue = queue.get(interaction.guildId!);
+    if (!serverQueue || serverQueue.player.state.status !== AudioPlayerStatus.Paused) {
+        return interaction.reply({ embeds: [createErrorEmbed('❌ Devam ettirilecek bir şey yok!')], ephemeral: true });
+    }
+    
+    serverQueue.player.unpause();
+    serverQueue.playing = true;
+    
+    const embed = new EmbedBuilder()
+        .setColor(0x00FF00)
+        .setTitle('▶️ Devam Ediliyor')
+        .setDescription('Müzik devam ediyor!')
+        .setTimestamp();
+    
+    await interaction.reply({ embeds: [embed] });
+}
+
+async function showQueueSlash(interaction: ChatInputCommandInteraction) {
+    const serverQueue = queue.get(interaction.guildId!);
+    if (!serverQueue) {
+        return interaction.reply({ embeds: [createErrorEmbed('❌ Sırada şarkı yok!')], ephemeral: true });
+    }
+    
+    const embed = createQueueEmbed(serverQueue.songs, serverQueue.autoplay);
+    await interaction.reply({ embeds: [embed] });
+}
+
+async function toggleAutoplaySlash(interaction: ChatInputCommandInteraction) {
+    const serverQueue = queue.get(interaction.guildId!);
+    if (!serverQueue) {
+        return interaction.reply({ embeds: [createErrorEmbed('❌ Bot bir ses kanalında değil!')], ephemeral: true });
+    }
+    
+    serverQueue.autoplay = !serverQueue.autoplay;
+    
+    const embed = new EmbedBuilder()
+        .setColor(serverQueue.autoplay ? 0x00FF00 : 0xFF0000)
+        .setTitle(`📻 Akıllı Radyo: ${serverQueue.autoplay ? 'AÇIK ✅' : 'KAPALI ❌'}`)
+        .setDescription(serverQueue.autoplay 
+            ? '🔥 Müzik asla durmayacak! Benzer şarkılar otomatik eklenecek!'
+            : '⏸️ Akıllı radyo kapatıldı. Sadece sıradaki şarkılar çalacak.')
+        .setTimestamp();
+    
+    await interaction.reply({ embeds: [embed] });
+}
+
+async function showNowPlayingSlash(interaction: ChatInputCommandInteraction) {
+    const serverQueue = queue.get(interaction.guildId!);
+    if (!serverQueue || serverQueue.songs.length === 0) {
+        return interaction.reply({ embeds: [createErrorEmbed('❌ Şu an çalan bir şarkı yok!')], ephemeral: true });
+    }
+    
+    const currentSong = serverQueue.songs[0];
+    const embed = createNowPlayingEmbed(currentSong, serverQueue.songs.length - 1);
+    const buttons = createPlaybackButtons(!serverQueue.playing);
+    
+    await interaction.reply({ embeds: [embed], components: [buttons] });
 }
 
 function pause(message: Message) {
