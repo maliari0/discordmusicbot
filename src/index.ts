@@ -1009,7 +1009,7 @@ async function executePlaySlash(interaction: ChatInputCommandInteraction, query:
             const connection = joinVoiceChannel({
                 channelId: voiceChannel.id,
                 guildId: interaction.guildId!,
-                adapterCreator: interaction.guild!.voiceAdapterCreator,
+                adapterCreator: interaction.guild!.voiceAdapterCreator as any,
             });
 
             queueContruct.connection = connection;
@@ -1143,7 +1143,7 @@ async function executePlay(message: Message, args: string[]) {
             const connection = joinVoiceChannel({
                 channelId: voiceChannel.id,
                 guildId: message.guild!.id,
-                adapterCreator: message.guild!.voiceAdapterCreator,
+                adapterCreator: message.guild!.voiceAdapterCreator as any,
             });
 
             queueContruct.connection = connection;

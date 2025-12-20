@@ -1,0 +1,40 @@
+{
+  "name": "taner-music-bot",
+  "version": "8.0.0",
+  "description": "Discord music bot with Last.fm integration, slash commands, and Turkish song support",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "postinstall": "npm run build"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "dependencies": {
+    "@discordjs/rest": "^2.0.0",
+    "@discordjs/voice": "^0.17.0",
+    "axios": "^1.7.9",
+    "discord-api-types": "^0.37.0",
+    "discord.js": "^14.0.0",
+    "ffmpeg-static": "^5.2.0",
+    "libsodium-wrappers": "^0.7.11",
+    "opusscript": "^0.0.8",
+    "yt-search": "^2.10.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "discord",
+    "music",
+    "bot",
+    "lastfm",
+    "turkish"
+  ],
+  "author": "maliari0",
+  "license": "MIT"
+}
