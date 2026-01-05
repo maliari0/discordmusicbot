@@ -1300,7 +1300,7 @@ async function play(guildId: string, song: Song) {
                     console.error('Şarkı URL:', song.url);
                     serverQueue.textChannel.send({ embeds: [createErrorEmbed('❌ Şarkı çalınamadı! YouTube erişim sorunu olabilir.')] });
                     if (serverQueue.songs.length > 0) {
-                        setTimeout(() => play(serverQueue.textChannel.guild.id, serverQueue.songs[0]), 1000);
+                        setTimeout(() => play(serverQueue.textChannel.guildId, serverQueue.songs[0]), 1000);
                     }
                 }
                 return;
@@ -1328,7 +1328,7 @@ async function play(guildId: string, song: Song) {
                     console.error('ffmpeg hatası:', err);
                     serverQueue.textChannel.send({ embeds: [createErrorEmbed('❌ Ses akışı başlatılamadı!')] });
                     if (serverQueue.songs.length > 0) {
-                        setTimeout(() => play(serverQueue.textChannel.guild.id, serverQueue.songs[0]), 1000);
+                        setTimeout(() => play(serverQueue.textChannel.guildId, serverQueue.songs[0]), 1000);
                     }
                 }
             });
@@ -1347,7 +1347,7 @@ async function play(guildId: string, song: Song) {
                 console.error('yt-dlp process hatası:', err);
                 serverQueue.textChannel.send({ embeds: [createErrorEmbed('❌ Şarkı çalınamadı!')] });
                 if (serverQueue.songs.length > 0) {
-                    setTimeout(() => play(serverQueue.textChannel.guild.id, serverQueue.songs[0]), 1000);
+                    setTimeout(() => play(serverQueue.textChannel.guildId, serverQueue.songs[0]), 1000);
                 }
             }
         });
@@ -1356,7 +1356,7 @@ async function play(guildId: string, song: Song) {
         console.error('Stream oluşturma hatası:', error);
         serverQueue.textChannel.send({ embeds: [createErrorEmbed('❌ Ses akışı başlatılamadı!')] });
         if (serverQueue.songs.length > 0) {
-            setTimeout(() => play(serverQueue.textChannel.guild.id, serverQueue.songs[0]), 1000);
+            setTimeout(() => play(serverQueue.textChannel.guildId, serverQueue.songs[0]), 1000);
         }
     }
 }
