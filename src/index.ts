@@ -1753,6 +1753,85 @@ async function executePlay(message: Message, args: string[]) {
   }
 }
 
+const INVIDIOUS_INSTANCES = [
+  "https://inv.nadeko.net",
+  "https://invidious.privacyredirect.com",
+  "https://invidious.protocols.io",
+  "https://invidious.nerdvpn.de",
+  "https://yt.artemislena.eu",
+];
+
+const PIPED_INSTANCES = [
+  "https://pipedapi.kavin.rocks",
+  "https://api.piped.privacydev.net",
+  "https://pipedapi.adminforge.de",
+];
+
+async function getAudioUrlFromInvidious(videoId: string): Promise<string | null> {
+  for (const instance of INVIDIOUS_INSTANCES) {
+    try {
+      const response = await axios.get(`${instance}/api/v1/videos/${videoId}`, {
+        timeout: 10000,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+      });
+
+      const formats = response.data.adaptiveFormats || [];
+      const audioFormat = formats
+        .filter((f: any) => f.type?.includes("audio"))
+        .sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+
+      if (audioFormat?.url) {
+        console.log(`✅ Invidious (${instance}) üzerinden audio URL alındı`);
+        return audioFormat.url;
+      }
+    } catch (error: any) {
+      console.log(`⚠️ Invidious ${instance} başarısız: ${error.message}`);
+    }
+  }
+  return null;
+}
+
+async function getAudioUrlFromPiped(videoId: string): Promise<string | null> {
+  for (const instance of PIPED_INSTANCES) {
+    try {
+      const response = await axios.get(`${instance}/streams/${videoId}`, {
+        timeout: 10000,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+      });
+
+      const audioStreams = response.data.audioStreams || [];
+      const bestAudio = audioStreams
+        .filter((s: any) => s.mimeType?.includes("audio"))
+        .sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+
+      if (bestAudio?.url) {
+        console.log(`✅ Piped (${instance}) üzerinden audio URL alındı`);
+        return bestAudio.url;
+      }
+    } catch (error: any) {
+      console.log(`⚠️ Piped ${instance} başarısız: ${error.message}`);
+    }
+  }
+  return null;
+}
+
+async function getAudioUrlWithFallback(videoId: string, videoUrl: string): Promise<string | null> {
+  console.log(`🔍 Audio URL alınıyor: ${videoId}`);
+
+  let audioUrl = await getAudioUrlFromInvidious(videoId);
+  if (audioUrl) return audioUrl;
+
+  audioUrl = await getAudioUrlFromPiped(videoId);
+  if (audioUrl) return audioUrl;
+
+  console.log("⚠️ Proxy yöntemleri başarısız, yt-dlp deneniyor...");
+  return null;
+}
+
 async function play(guildId: string, song: Song) {
   const serverQueue = queue.get(guildId);
   if (!serverQueue) return;
@@ -1785,129 +1864,22 @@ async function play(guildId: string, song: Song) {
   }
 
   try {
-    // yt-dlp ile audio URL al (streaming yerine URL extraction)
-    const ytDlpProcess = spawn("yt-dlp", [
-      song.url,
-      "-f",
-      "bestaudio/best",
-      "--no-playlist",
-      "--geo-bypass",
-      "--no-check-certificates",
-      "--extractor-args",
-      "youtube:player_client=android,ios",
-      "--get-url",
-      "--quiet",
-    ]);
-
-    let audioUrl = "";
-    let errorOccurred = false;
-
-    ytDlpProcess.stdout.on("data", (data) => {
-      audioUrl += data.toString();
-    });
-
-    ytDlpProcess.stderr.on("data", (data) => {
-      if (!errorOccurred) {
-        console.error("yt-dlp stderr:", data.toString());
-      }
-    });
-
-    ytDlpProcess.on("close", (code) => {
-      if (code !== 0 || !audioUrl.trim()) {
-        if (!errorOccurred) {
-          errorOccurred = true;
-          console.error("yt-dlp hatası, kod:", code);
-          console.error("Şarkı URL:", song.url);
-          serverQueue.textChannel.send({
-            embeds: [
-              createErrorEmbed(
-                "❌ Şarkı çalınamadı! YouTube erişim sorunu olabilir."
-              ),
-            ],
-          });
-          if (serverQueue.songs.length > 0) {
-            setTimeout(
-              () => play(serverQueue.textChannel.guildId, serverQueue.songs[0]),
-              1000
-            );
-          }
-        }
-        return;
-      }
-
-      // ffmpeg ile audio stream oluştur
-      const ffmpegProcess = spawn(
-        "ffmpeg",
-        [
-          "-reconnect",
-          "1",
-          "-reconnect_streamed",
-          "1",
-          "-reconnect_delay_max",
-          "5",
-          "-i",
-          audioUrl.trim(),
-          "-analyzeduration",
-          "0",
-          "-loglevel",
-          "0",
-          "-f",
-          "s16le",
-          "-ar",
-          "48000",
-          "-ac",
-          "2",
-          "pipe:1",
-        ],
-        {
-          stdio: ["pipe", "pipe", "pipe"],
-        }
-      );
-
-      ffmpegProcess.on("error", (err) => {
-        if (!errorOccurred) {
-          errorOccurred = true;
-          console.error("ffmpeg hatası:", err);
-          serverQueue.textChannel.send({
-            embeds: [createErrorEmbed("❌ Ses akışı başlatılamadı!")],
-          });
-          if (serverQueue.songs.length > 0) {
-            setTimeout(
-              () => play(serverQueue.textChannel.guildId, serverQueue.songs[0]),
-              1000
-            );
-          }
-        }
-      });
-
-      const resource = createAudioResource(ffmpegProcess.stdout, {
-        inputType: StreamType.Raw,
-        inlineVolume: true,
-      });
-
-      serverQueue.player.play(resource);
-    });
-
-    ytDlpProcess.on("error", (err) => {
-      if (!errorOccurred) {
-        errorOccurred = true;
-        console.error("yt-dlp process hatası:", err);
-        serverQueue.textChannel.send({
-          embeds: [createErrorEmbed("❌ Şarkı çalınamadı!")],
-        });
-        if (serverQueue.songs.length > 0) {
-          setTimeout(
-            () => play(serverQueue.textChannel.guildId, serverQueue.songs[0]),
-            1000
-          );
-        }
-      }
-    });
+    const videoId = song.id || song.url.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/)?.[1] || "";
+    
+    let audioUrl = await getAudioUrlWithFallback(videoId, song.url);
+    
+    if (audioUrl) {
+      playAudioFromUrl(audioUrl, serverQueue, guildId, song);
+    } else {
+      console.log("🔄 Proxy başarısız, yt-dlp ile deneniyor...");
+      playWithYtDlp(song.url, serverQueue, guildId, song);
+    }
   } catch (error) {
     console.error("Stream oluşturma hatası:", error);
     serverQueue.textChannel.send({
       embeds: [createErrorEmbed("❌ Ses akışı başlatılamadı!")],
     });
+    serverQueue.songs.shift();
     if (serverQueue.songs.length > 0) {
       setTimeout(
         () => play(serverQueue.textChannel.guildId, serverQueue.songs[0]),
@@ -1915,6 +1887,96 @@ async function play(guildId: string, song: Song) {
       );
     }
   }
+}
+
+function playAudioFromUrl(audioUrl: string, serverQueue: ServerQueue, guildId: string, song: Song) {
+  const ffmpegProcess = spawn(
+    "ffmpeg",
+    [
+      "-reconnect", "1",
+      "-reconnect_streamed", "1",
+      "-reconnect_delay_max", "5",
+      "-i", audioUrl,
+      "-analyzeduration", "0",
+      "-loglevel", "0",
+      "-f", "s16le",
+      "-ar", "48000",
+      "-ac", "2",
+      "pipe:1",
+    ],
+    { stdio: ["pipe", "pipe", "pipe"] }
+  );
+
+  ffmpegProcess.on("error", (err) => {
+    console.error("ffmpeg hatası:", err);
+    serverQueue.songs.shift();
+    if (serverQueue.songs.length > 0) {
+      setTimeout(() => play(guildId, serverQueue.songs[0]), 1000);
+    }
+  });
+
+  const resource = createAudioResource(ffmpegProcess.stdout, {
+    inputType: StreamType.Raw,
+    inlineVolume: true,
+  });
+
+  serverQueue.player.play(resource);
+}
+
+function playWithYtDlp(songUrl: string, serverQueue: ServerQueue, guildId: string, song: Song) {
+  const ytDlpProcess = spawn("yt-dlp", [
+    songUrl,
+    "-f", "bestaudio/best",
+    "--no-playlist",
+    "--geo-bypass",
+    "--no-check-certificates",
+    "--extractor-args", "youtube:player_client=web",
+    "--get-url",
+    "--quiet",
+  ]);
+
+  let audioUrl = "";
+  let errorOccurred = false;
+
+  ytDlpProcess.stdout.on("data", (data) => {
+    audioUrl += data.toString();
+  });
+
+  ytDlpProcess.stderr.on("data", (data) => {
+    if (!errorOccurred) {
+      console.error("yt-dlp stderr:", data.toString());
+    }
+  });
+
+  ytDlpProcess.on("close", (code) => {
+    if (code !== 0 || !audioUrl.trim()) {
+      if (!errorOccurred) {
+        errorOccurred = true;
+        console.error("yt-dlp hatası, kod:", code);
+        serverQueue.textChannel.send({
+          embeds: [createErrorEmbed("❌ Şarkı çalınamadı! YouTube erişim sorunu.")],
+        });
+        serverQueue.songs.shift();
+        if (serverQueue.songs.length > 0) {
+          setTimeout(() => play(guildId, serverQueue.songs[0]), 1000);
+        }
+      }
+      return;
+    }
+
+    playAudioFromUrl(audioUrl.trim(), serverQueue, guildId, song);
+  });
+
+  ytDlpProcess.on("error", (err) => {
+    if (!errorOccurred) {
+      errorOccurred = true;
+      console.error("yt-dlp process hatası:", err);
+      serverQueue.songs.shift();
+      if (serverQueue.songs.length > 0) {
+        setTimeout(() => play(guildId, serverQueue.songs[0]), 1000);
+      }
+    }
+  });
 }
 
 function toggleAutoplay(message: Message) {
