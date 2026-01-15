@@ -1753,23 +1753,60 @@ async function executePlay(message: Message, args: string[]) {
   }
 }
 
+const COBALT_INSTANCES = [
+  "https://api.cobalt.tools",
+  "https://cobalt-api.hyper.lol",
+];
+
 const INVIDIOUS_INSTANCES = [
-  "https://inv.nadeko.net",
-  "https://invidious.privacyredirect.com",
-  "https://invidious.protocols.io",
-  "https://invidious.nerdvpn.de",
-  "https://yt.artemislena.eu",
+  "https://vid.puffyan.us",
+  "https://invidious.snopyta.org",
+  "https://y.com.sb",
+  "https://invidious.kavin.rocks",
 ];
 
 const PIPED_INSTANCES = [
   "https://pipedapi.kavin.rocks",
-  "https://api.piped.privacydev.net",
-  "https://pipedapi.adminforge.de",
+  "https://pipedapi.in.projectsegfau.lt",
+  "https://api.piped.yt",
 ];
+
+async function getAudioUrlFromCobalt(videoUrl: string): Promise<string | null> {
+  for (const instance of COBALT_INSTANCES) {
+    try {
+      console.log(`🔄 Cobalt deneniyor: ${instance}`);
+      const response = await axios.post(
+        `${instance}/api/json`,
+        {
+          url: videoUrl,
+          aFormat: "mp3",
+          isAudioOnly: true,
+          filenamePattern: "basic",
+        },
+        {
+          timeout: 15000,
+          headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (response.data?.url) {
+        console.log(`✅ Cobalt (${instance}) üzerinden audio URL alındı`);
+        return response.data.url;
+      }
+    } catch (error: any) {
+      console.log(`⚠️ Cobalt ${instance} başarısız: ${error.message}`);
+    }
+  }
+  return null;
+}
 
 async function getAudioUrlFromInvidious(videoId: string): Promise<string | null> {
   for (const instance of INVIDIOUS_INSTANCES) {
     try {
+      console.log(`🔄 Invidious deneniyor: ${instance}`);
       const response = await axios.get(`${instance}/api/v1/videos/${videoId}`, {
         timeout: 10000,
         headers: {
@@ -1796,6 +1833,7 @@ async function getAudioUrlFromInvidious(videoId: string): Promise<string | null>
 async function getAudioUrlFromPiped(videoId: string): Promise<string | null> {
   for (const instance of PIPED_INSTANCES) {
     try {
+      console.log(`🔄 Piped deneniyor: ${instance}`);
       const response = await axios.get(`${instance}/streams/${videoId}`, {
         timeout: 10000,
         headers: {
@@ -1822,13 +1860,16 @@ async function getAudioUrlFromPiped(videoId: string): Promise<string | null> {
 async function getAudioUrlWithFallback(videoId: string, videoUrl: string): Promise<string | null> {
   console.log(`🔍 Audio URL alınıyor: ${videoId}`);
 
-  let audioUrl = await getAudioUrlFromInvidious(videoId);
+  let audioUrl = await getAudioUrlFromCobalt(videoUrl);
+  if (audioUrl) return audioUrl;
+
+  audioUrl = await getAudioUrlFromInvidious(videoId);
   if (audioUrl) return audioUrl;
 
   audioUrl = await getAudioUrlFromPiped(videoId);
   if (audioUrl) return audioUrl;
 
-  console.log("⚠️ Proxy yöntemleri başarısız, yt-dlp deneniyor...");
+  console.log("⚠️ Tüm proxy yöntemleri başarısız, yt-dlp deneniyor...");
   return null;
 }
 
