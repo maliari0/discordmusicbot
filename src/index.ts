@@ -1965,59 +1965,76 @@ function playAudioFromUrl(audioUrl: string, serverQueue: ServerQueue, guildId: s
 }
 
 function playWithYtDlp(songUrl: string, serverQueue: ServerQueue, guildId: string, song: Song) {
-  const ytDlpProcess = spawn("yt-dlp", [
-    songUrl,
-    "-f", "bestaudio/best",
-    "--no-playlist",
-    "--geo-bypass",
-    "--no-check-certificates",
-    "--extractor-args", "youtube:player_client=web",
-    "--get-url",
-    "--quiet",
-  ]);
+  const playerClients = ["android", "ios", "tv_embedded", "web"];
+  let currentClientIndex = 0;
 
-  let audioUrl = "";
-  let errorOccurred = false;
-
-  ytDlpProcess.stdout.on("data", (data) => {
-    audioUrl += data.toString();
-  });
-
-  ytDlpProcess.stderr.on("data", (data) => {
-    if (!errorOccurred) {
-      console.error("yt-dlp stderr:", data.toString());
-    }
-  });
-
-  ytDlpProcess.on("close", (code) => {
-    if (code !== 0 || !audioUrl.trim()) {
-      if (!errorOccurred) {
-        errorOccurred = true;
-        console.error("yt-dlp hatası, kod:", code);
-        serverQueue.textChannel.send({
-          embeds: [createErrorEmbed("❌ Şarkı çalınamadı! YouTube erişim sorunu.")],
-        });
-        serverQueue.songs.shift();
-        if (serverQueue.songs.length > 0) {
-          setTimeout(() => play(guildId, serverQueue.songs[0]), 1000);
-        }
-      }
-      return;
-    }
-
-    playAudioFromUrl(audioUrl.trim(), serverQueue, guildId, song);
-  });
-
-  ytDlpProcess.on("error", (err) => {
-    if (!errorOccurred) {
-      errorOccurred = true;
-      console.error("yt-dlp process hatası:", err);
+  const tryNextClient = () => {
+    if (currentClientIndex >= playerClients.length) {
+      console.error("❌ Tüm player client'lar başarısız!");
+      serverQueue.textChannel.send({
+        embeds: [createErrorEmbed("❌ Şarkı çalınamadı! YouTube erişim engeli.")],
+      });
       serverQueue.songs.shift();
       if (serverQueue.songs.length > 0) {
         setTimeout(() => play(guildId, serverQueue.songs[0]), 1000);
       }
+      return;
     }
-  });
+
+    const client = playerClients[currentClientIndex];
+    console.log(`🔄 yt-dlp deneniyor: player_client=${client}`);
+
+    const args = [
+      songUrl,
+      "-f", "bestaudio/best",
+      "--no-playlist",
+      "--geo-bypass",
+      "--no-check-certificates",
+      "--extractor-args", `youtube:player_client=${client}`,
+      "--get-url",
+      "--quiet",
+    ];
+
+    if (process.env.YOUTUBE_COOKIES) {
+      args.push("--cookies", "/app/cookies.txt");
+    }
+
+    const ytDlpProcess = spawn("yt-dlp", args);
+
+    let audioUrl = "";
+    let errorOccurred = false;
+
+    ytDlpProcess.stdout.on("data", (data) => {
+      audioUrl += data.toString();
+    });
+
+    ytDlpProcess.stderr.on("data", (data) => {
+      console.log(`yt-dlp (${client}) stderr:`, data.toString().trim());
+    });
+
+    ytDlpProcess.on("close", (code) => {
+      if (code !== 0 || !audioUrl.trim()) {
+        console.log(`⚠️ player_client=${client} başarısız, bir sonraki deneniyor...`);
+        currentClientIndex++;
+        tryNextClient();
+        return;
+      }
+
+      console.log(`✅ yt-dlp (${client}) başarılı!`);
+      playAudioFromUrl(audioUrl.trim(), serverQueue, guildId, song);
+    });
+
+    ytDlpProcess.on("error", (err) => {
+      if (!errorOccurred) {
+        errorOccurred = true;
+        console.error("yt-dlp process hatası:", err);
+        currentClientIndex++;
+        tryNextClient();
+      }
+    });
+  };
+
+  tryNextClient();
 }
 
 function toggleAutoplay(message: Message) {
